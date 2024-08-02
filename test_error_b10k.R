@@ -1,141 +1,96 @@
 library(ape)
+library(doParallel)
+library(GGally)
 library(phangorn)
 # library(Rsamtools)
 
-bme <- function(tree, dists) {
-  key <- order(row.names(dists))
-  dists <- dists[key, key]
-  p_ij <- ape::cophenetic.phylo(tree)
-  key <- order(row.names(p_ij))
-  p_ij <- p_ij[key, key]
-  dp <- dists * 2^(-p_ij)
-  return(2 * sum(dp[upper.tri(dp)]))
-}
-
-bme_adj <- function(tree, dists) {
-  key <- order(row.names(dists))
-  dists <- dists[key, key]
-  p_ij <- ape::cophenetic.phylo(tree)
-  key <- order(row.names(p_ij))
-  p_ij <- p_ij[key, key]
-  dp <- dists * 2^(-p_ij)
-  obj <- -2 * sum(dp[upper.tri(dp)])
-  return(-1 * (intercept + gradient * obj))
-}
-
-run_rax <- function(bl_tr, name) {
-  tree_name <- paste0("data/random_trees/tmp_", name, ".tre")
-  ape::write.tree(bl_tr, tree_name)
-  exec <- paste0(
-    "raxml-ng --evaluate --msa data/b10k_100kbp.fasta  --model GTR+G --tree ", tree_name,
-    " --brlen scaled --redo  --threads 1 --nofiles"
-  )
-  output <- invisible(system(exec, intern = TRUE))
-  matching_index <- grep("Final LogLikelihood:", output, fixed = TRUE)[1]
-  log_likelihood_line <- output[matching_index]
-  like <- gsub("Final LogLikelihood:", "", log_likelihood_line)
-  like <- gsub(" ", "", like)
-  like <- as.numeric(like)
-  return(like)
-}
-
-read_distance_matrix <- function(filepath) {
-  D_new <- read.csv(filepath)
-  name <- D_new[, 1]
-  D_new <- D_new[2:ncol(D_new)]
-  colnames(D_new) <- rownames(D_new) <- name
-  D_new <- -as.matrix(D_new)
-
-  key <- order(row.names(D_new))
-
-  D_new <- D_new[key, key]
-
-  return(D_new)
-}
+source("plot.R")
+source("tree.R")
+source("utils.R")
 
 aln <- read.FASTA(paste0("data/b10k_100kbp.fasta"))
-
-chars <- as.character(aln)
 
 D <- -as.matrix(dist.ml(phyDat(aln)))
 key <- order(row.names(D))
 D <- D[key, key]
 
 best_tree <- read.tree("data/main.tre")
-raxml <- read.tree("data/b10k_raxml.tre")
+raxml_tree <- read.tree("data/b10k_raxml.tre")
 
-D_new <- read_distance_matrix("data/b10k_100.csv")
+fnames <- c("b10k_100", "b10k_60mill", "b10k_600mill_unnorm", "b10k_90mill_unnorm")
 
-D_new2 <- read_distance_matrix("data/b10k_60mill.csv")
+# Get all distance matrices
+all_dmats <- list()
 
-D_new3 <- read_distance_matrix("data/b10k_600mill_unnorm.csv")
+all_dmats[["b10k_100kbp"]] <- as.vector(D)
 
-D_new4 <- read_distance_matrix("data/b10k_90mill_unnorm.csv")
+all_trees <- list()
+all_trees[["best_tree"]] <- best_tree
+all_trees[["raxml_tree"]] <- raxml_tree
 
-bme_tree <- fastme.bal(as.dist(-D))
-bme_tree2 <- fastme.bal(as.dist(-D_new))
-bme_tree3 <- fastme.bal(as.dist(-D_new2))
-bme_tree4 <- fastme.bal(as.dist(-D_new3))
-bme_tree5 <- fastme.bal(as.dist(-D_new4))
+all_dists_to_best <- list()
+all_dists_to_raxml <- list()
 
-1 - RF.dist(best_tree, bme_tree, normalize = TRUE)
-1 - RF.dist(best_tree, bme_tree2, normalize = TRUE)
-1 - RF.dist(best_tree, bme_tree3, normalize = TRUE)
-1 - RF.dist(best_tree, bme_tree4, normalize = TRUE)
-1 - RF.dist(best_tree, bme_tree5, normalize = TRUE)
+for (i in seq_along(fnames)) {
+  fname <- fnames[i]
 
-1 - RF.dist(raxml, best_tree, normalize = TRUE)
-1 - RF.dist(raxml, bme_tree, normalize = TRUE)
-1 - RF.dist(raxml, bme_tree2, normalize = TRUE)
-1 - RF.dist(raxml, bme_tree3, normalize = TRUE)
-1 - RF.dist(raxml, bme_tree4, normalize = TRUE)
-1 - RF.dist(raxml, bme_tree5, normalize = TRUE)
+  D_new <- read_distance_matrix(paste("data/", fname, ".csv", sep = ""))
 
-par(mfrow = c(1, 4))
-plot(as.vector(D_new), as.vector(D_new2))
-abline(0, 1, col = "red")
-lm(x ~ y, data.frame(x = as.vector(D_new), y = as.vector(D_new2)))
+  bme_tree <- fastme.bal(as.dist(-D))
 
+  all_trees[[fname]] <- bme_tree
 
-plot(as.vector(D_new), as.vector(D_new3))
-abline(0, 1, col = "red")
-lm(x ~ y, data.frame(x = as.vector(D_new), y = as.vector(D_new3)))
-lm_adjust <- lm(x ~ y, data.frame(x = as.vector(D_new), y = as.vector(D_new3)))
+  all_dists_to_best[[fname]] <- 1 - RF.dist(
+    best_tree, bme_tree,
+    normalize = TRUE
+  )
 
+  all_dists_to_raxml[[fname]] <- 1 - RF.dist(
+    raxml_tree, bme_tree,
+    normalize = TRUE
+  )
 
-plot(as.vector(D_new2), as.vector(D_new3))
-abline(0, 1, col = "red")
-lm(x ~ y, data.frame(x = as.vector(D_new2), y = as.vector(D_new3)))
+  all_dmats[[fname]] <- D_new
+}
 
+dmat_df <- as.data.frame(lapply(all_dmats, as.vector))
 
-plot(as.vector(D_new), as.vector(D_new4))
-abline(0, 1, col = "red")
-lm(x ~ y, data.frame(x = as.vector(D_new), y = as.vector(D_new4)))
+# Compare distance matrices
+ggpairs(
+  dmat_df,
+  lower = list(continuous = minimal_lmplot),
+  diag = list(continuous = minimal_kdeplot)
+)
 
+corrcoefs <- cor(dmat_df)
 
-TR <- bme_tree2
-TR <- unroot(TR)
+TR <- unroot(all_trees[["b10k_100"]])
 TR$edge.length <- rep(1, Nedge(TR))
 
+D_choice <- all_dmats[["b10k_600mill_unnorm"]]
 
-D_choice <- D_new3
-
-ntrials <- 200
+n_trials <- 200
 options(digits = 12)
-setwd("~/tools/raxml-ng_v1.2.0_linux_x86_64/")
-out1 <- matrix(NA, nrow = ntrials, ncol = 4)
-library(doParallel)
-registerDoParallel(50)
-out1 <- foreach(i = 1:ntrials, .combine = rbind) %dopar% {
+
+pb <- progress_bar$new(total = n_trials)
+
+out1 <- matrix(NA, nrow = n_trials, ncol = 4)
+pb <- progress_bar$new(total = n_trials)
+for (i in 1:n_trials) {
   tr <- rNNI(TR, moves = rpois(1, 1) + 1)
   tr <- unroot(tr)
   tr$edge.length <- rep(1, Nedge(tr))
-  like1 <- bme(tr, D_new)
-  like2 <- bme(tr, D_new2)
+  like1 <- bme(tr, all_dmats[["b10k_100"]])
+  like2 <- bme(tr, all_dmats[["b10k_60mill"]])
   like3 <- bme(tr, D_choice)
   like <- run_rax(tr, i)
-  return(cbind(-1 * like1, -1 * like2, -1 * like3, like))
+
+  pb$tick()
+
+  out1[i, ] <- c(-1 * like1, -1 * like2, -1 * like3, 1 * like)
 }
+
+write.table(out1, "trials.Rdata")
 
 
 par(mfrow = c(1, 3))
@@ -180,7 +135,6 @@ like
 
 
 burnin <- 5000000
-library(doParallel)
 registerDoParallel(20)
 runs <- 20
 ngen <- 20000000
@@ -279,7 +233,7 @@ out_tree <- support_tree
 out_tree$node.label <- 100 - out_tree$node.label
 write.tree(out_tree)
 
-1 - RF.dist(raxml, mcc_length, normalize = T)
+1 - RF.dist(raxml_tree, mcc_length, normalize = T)
 
 
 
@@ -300,7 +254,7 @@ length(un_tst)
 
 rfd <- rep(0, length(un_tst))
 for (i in 1:length(un_tst)) {
-  rfd[i] <- 1 - RF.dist(read.tree(text = un_tst[i]), raxml, normalize = TRUE)
+  rfd[i] <- 1 - RF.dist(read.tree(text = un_tst[i]), raxml_tree, normalize = TRUE)
 }
 
 
