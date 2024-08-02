@@ -1,6 +1,8 @@
 library(ape)
+library(dplyr)
 library(doParallel)
 library(GGally)
+library(magrittr)
 library(phangorn)
 # library(Rsamtools)
 
@@ -82,56 +84,43 @@ for (i in 1:n_trials) {
   tr$edge.length <- rep(1, Nedge(tr))
   like1 <- bme(tr, all_dmats[["b10k_100"]])
   like2 <- bme(tr, all_dmats[["b10k_60mill"]])
-  like3 <- bme(tr, D_choice)
-  like <- run_rax(tr, i)
+  like3 <- bme(tr, all_dmats[["b10k_600mill_unnorm"]])
+
+  # raxml
+  tree_name <- paste0("data/random_trees/tmp_", i, ".tre")
+  write.tree(tr, tree_name)
+  like <- run_rax(tree_name)
 
   pb$tick()
 
   out1[i, ] <- c(-1 * like1, -1 * like2, -1 * like3, 1 * like)
 }
 
-write.table(out1, "trials.Rdata")
+ggpairs(
+  as.data.frame(out1) %>% set_colnames(c("100", "60M", "600M_unnorm", "raxml")),
+  lower = list(continuous = minimal_lmplot),
+  diag = list(continuous = minimal_kdeplot)
+)
 
+lm600mill_coefs <- coef(lm(y ~ x, data = data.frame(x = out1[, 3], y = out1[, 4])))
 
-par(mfrow = c(1, 3))
+intercept <- as.numeric(lm600mill_coefs[1])
+gradient <- as.numeric(lm600mill_coefs[2])
 
-lm100k <- lm(y ~ x, data = data.frame(x = out1[, 1], y = out1[, 4]))
-plot(coef(lm100k)[1] + coef(lm100k)[2] * out1[, 1], out1[, 4], pch = 16)
-abline(0, 1, col = "red")
-
-lm60mill <- lm(y ~ x, data = data.frame(x = out1[, 2], y = out1[, 4]))
-plot(coef(lm60mill)[1] + coef(lm60mill)[2] * out1[, 2], out1[, 4], pch = 16)
-abline(0, 1, col = "red")
-
-lm600mill <- lm(y ~ x, data = data.frame(x = out1[, 3], y = out1[, 4]))
-plot(coef(lm600mill)[1] + coef(lm600mill)[2] * out1[, 3], out1[, 4], pch = 16)
-abline(0, 1, col = "red")
-
-lm100k
-lm60mill
-lm600mill
-
-intercept <- as.numeric(coef(lm600mill)[1])
-gradient <- as.numeric(coef(lm600mill)[2])
-
-optimal_tree <- bme_tree
-optimal_tree <- unroot(optimal_tree)
+optimal_tree <- unroot(bme_tree)
 optimal_tree$edge.length <- rep(1, Nedge(optimal_tree))
-bme_adj(optimal_tree, D_choice)
-
+bme_adj(optimal_tree, D_choice, intercept, gradient)
 
 i <- 0
-write.tree(optimal_tree, paste0("data/b10k_calibration_trees/", i, ".tre"))
-exec <- paste0("raxml-ng --evaluate --msa data/b10k_100kbp.fasta --model GTR+G --tree data/b10k_calibration_trees/", i, ".tre --brlen scaled --redo")
-invisible(system(exec, intern = TRUE))
-# 	system(exec)
-log_file_path <- "data/b10k_100kbp.fasta.raxml.log"
-grep_command <- paste("grep 'Final LogLikelihood:'", log_file_path, sep = " ")
-log_likelihood_line <- system(grep_command, intern = TRUE)
-like <- gsub("Final LogLikelihood:", "", log_likelihood_line)
-like <- gsub(" ", "", like)
-like <- as.numeric(like)
-like
+tree_name <- paste0("data/b10k_calibration_trees/", i, ".tre")
+write.tree(optimal_tree, tree_name)
+like <- run_rax(tree_name, nofiles = TRUE)
+# log_file_path <- "data/b10k_100kbp.fasta.raxml.log"
+# grep_command <- paste("grep 'Final LogLikelihood:'", log_file_path, sep = " ")
+# log_likelihood_line <- system(grep_command, intern = TRUE)
+# like <- gsub("Final LogLikelihood:", "", log_likelihood_line)
+# like <- gsub(" ", "", like)
+# like <- as.numeric(like)
 
 
 burnin <- 5000000
@@ -141,53 +130,14 @@ ngen <- 20000000
 thin <- 2000
 count <- 0
 for (i in 2:ngen) {
-  if (i >= burnin & i %% thin == 0) count <- count + 1
+  if (i >= burnin && i %% thin == 0) count <- count + 1
 }
 count * 20
 
-
-mcmc <- function(dists, ngen) {
-  lp <- numeric(ngen)
-  trees <- vector("list", ngen)
-  phy <- ape::rmtopology(1, dim(dists)[1], FALSE, tip.label = colnames(dists), br = 1)[[1]]
-
-  current_tree <- phy
-  lp[1] <- bme_adj(phy, dists)
-  naccept <- 0
-  k <- 1
-  tree_store <- rep("", ngen)
-  for (i in 2:ngen) {
-    moves <- rpois(1, 1) + 1
-    phy_prop <- phangorn::rNNI(current_tree, moves = moves)
-
-    lp_prop <- bme_adj(phy_prop, dists)
-    AR <- (-lp_prop + lp[i - 1])
-
-    if (log(runif(1)) < AR) {
-      naccept <- naccept + 1
-      if (i >= burnin & i %% thin == 0) {
-        tree_store[k] <- write.tree(phy_prop)
-        k <- k + 1
-      }
-      current_tree <- phy_prop
-      lp[i] <- lp_prop
-    } else {
-      lp[i] <- lp[i - 1]
-      if (i >= burnin & i %% thin == 0) {
-        tree_store[k] <- write.tree(current_tree)
-        k <- k + 1
-      }
-    }
-  }
-
-  return(list(lengths = lp, trees = tree_store[2:k]))
-}
-
 out <- foreach(i = 1:runs) %dopar% {
-  run <- mcmc(D_choice, ngen)
+  run <- mcmc(D_choice, ngen, burnin, thin)
   return(run)
 }
-
 
 ################################################################################
 
@@ -221,7 +171,14 @@ for (i in 1:runs) {
 }
 mc <- mcc(trees, rooted = F)
 
-mcc_length <- phytools::optim.phylo.ls(-1 * D_choice, stree = mc, set.neg.to.zero = TRUE, fixed = TRUE, tol = 1e-10, collapse = FALSE)
+mcc_length <- phytools::optim.phylo.ls(
+  -D_choice,
+  stree = mc,
+  set.neg.to.zero = TRUE,
+  fixed = TRUE,
+  tol = 1e-10,
+  collapse = FALSE
+)
 
 support_tree <- plotBS(mcc_length, trees, type = "phylogram")
 write.tree(support_tree)
@@ -234,8 +191,6 @@ out_tree$node.label <- 100 - out_tree$node.label
 write.tree(out_tree)
 
 1 - RF.dist(raxml_tree, mcc_length, normalize = T)
-
-
 
 write.tree(trees, paste0("data/b10k.tree"))
 write.csv(mcmc_matrix, paste0("data/b10k_mcmc_matrix.csv"))
@@ -253,13 +208,12 @@ length(un_tst)
 
 
 rfd <- rep(0, length(un_tst))
-for (i in 1:length(un_tst)) {
+for (i in seq_along(un_tst)) {
   rfd[i] <- 1 - RF.dist(read.tree(text = un_tst[i]), raxml_tree, normalize = TRUE)
 }
 
-
 nsamp <- 2000
-sm <- sample(1:length(trees), nsamp)
+sm <- sample(seq_along(trees), nsamp)
 a <- 1:nsamp
 b <- 1:nsamp
 c <- 1:nsamp
