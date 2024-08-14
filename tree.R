@@ -44,20 +44,25 @@ run_rax <- function(tree_name, nofiles = FALSE) {
   return(like)
 }
 
-mcmc <- function(dists, ngen, burnin, thin) {
+mcmc <- function(dists, ngen, burnin, thin, intercept, gradient) {
   lp <- numeric(ngen)
   phy <- ape::rmtopology(1, dim(dists)[1], FALSE, tip.label = colnames(dists), br = 1)[[1]]
 
   current_tree <- phy
-  lp[1] <- bme_adj(phy, dists)
+  lp[1] <- bme_adj(phy, dists, intercept, gradient)
   naccept <- 0
   k <- 1
   tree_store <- rep("", ngen)
+  # pb <- progress_bar$new(
+  #   format = "[:bar] :current/:total (:percent) eta: :eta",
+  #   total = ngen - 1
+  # )
+
   for (i in 2:ngen) {
     moves <- rpois(1, 1) + 1
     phy_prop <- phangorn::rNNI(current_tree, moves = moves)
 
-    lp_prop <- bme_adj(phy_prop, dists)
+    lp_prop <- bme_adj(phy_prop, dists, intercept, gradient)
     AR <- (-lp_prop + lp[i - 1])
 
     if (log(runif(1)) < AR) {
@@ -75,6 +80,8 @@ mcmc <- function(dists, ngen, burnin, thin) {
         k <- k + 1
       }
     }
+
+    # pb$tick()
   }
 
   return(list(lengths = lp, trees = tree_store[2:k]))

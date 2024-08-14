@@ -96,6 +96,8 @@ for (i in 1:n_trials) {
   out1[i, ] <- c(-1 * like1, -1 * like2, -1 * like3, 1 * like)
 }
 
+write.table(out1, "results/trials.Rdata")
+
 ggpairs(
   as.data.frame(out1) %>% set_colnames(c("100", "60M", "600M_unnorm", "raxml")),
   lower = list(continuous = minimal_lmplot),
@@ -115,12 +117,6 @@ i <- 0
 tree_name <- paste0("data/b10k_calibration_trees/", i, ".tre")
 write.tree(optimal_tree, tree_name)
 like <- run_rax(tree_name, nofiles = TRUE)
-# log_file_path <- "data/b10k_100kbp.fasta.raxml.log"
-# grep_command <- paste("grep 'Final LogLikelihood:'", log_file_path, sep = " ")
-# log_likelihood_line <- system(grep_command, intern = TRUE)
-# like <- gsub("Final LogLikelihood:", "", log_likelihood_line)
-# like <- gsub(" ", "", like)
-# like <- as.numeric(like)
 
 
 burnin <- 5000000
@@ -129,13 +125,13 @@ runs <- 20
 ngen <- 20000000
 thin <- 2000
 count <- 0
+
 for (i in 2:ngen) {
   if (i >= burnin && i %% thin == 0) count <- count + 1
 }
-count * 20
 
 out <- foreach(i = 1:runs) %dopar% {
-  run <- mcmc(D_choice, ngen, burnin, thin)
+  run <- mcmc(D_choice, ngen, burnin, thin, intercept, gradient)
   return(run)
 }
 
@@ -149,27 +145,39 @@ for (i in 1:runs) {
 ################################################################################
 
 samp <- seq(1, length(burnin:ngen), length.out = count)
-mcmc_matrix <- matrix(nrow = runs, ncol = length(samp))
+mcmc_matrix <- matrix(ncol = runs, nrow = length(samp))
 for (i in 1:runs) {
-  mcmc_matrix[i, ] <- out[[i]]$lengths[burnin:ngen][samp]
+  mcmc_matrix[, i] <- out[[i]]$lengths[burnin:ngen][samp]
 }
-length(unique(as.vector(mcmc_matrix)))
-
-library(scales)
-plot(mcmc_matrix[1, ], type = "l", ylim = c(min(mcmc_matrix), max(mcmc_matrix)), ylab = "Log Posterior", xlab = "Generations")
-for (i in 2:runs) {
-  lines(mcmc_matrix[i, ], col = alpha(i, 0.5))
-}
-
 
 trees <- read.tree(text = out[[1]]$trees[1])
 for (i in 1:runs) {
   print(i)
-  for (j in 1:length(out[[i]]$trees)) {
+  for (j in seq_along(out[[i]]$trees)) {
     trees <- c(trees, read.tree(text = out[[i]]$trees[j]))
   }
 }
-mc <- mcc(trees, rooted = F)
+
+write.tree(trees, "results/b10k.tree")
+write.csv(mcmc_matrix, "results/b10k_mcmc_matrix.csv")
+
+plot(
+  mcmc_matrix[, 1],
+  type = "l",
+  ylim = c(min(mcmc_matrix), max(mcmc_matrix)),
+  ylab = "Log Posterior",
+  xlab = "Generations"
+)
+
+for (i in 2:runs) {
+  lines(mcmc_matrix[, i], col = alpha(i, 0.5))
+}
+
+# mcmc_matrix <- read.csv("results/b10k_mcmc_matrix.csv") %>%
+#   select(-X) %>%
+#   t()
+
+mc <- mcc(trees, rooted = FALSE)
 
 mcc_length <- phytools::optim.phylo.ls(
   -D_choice,
@@ -192,10 +200,7 @@ write.tree(out_tree)
 
 1 - RF.dist(raxml_tree, mcc_length, normalize = T)
 
-write.tree(trees, paste0("data/b10k.tree"))
-write.csv(mcmc_matrix, paste0("data/b10k_mcmc_matrix.csv"))
-
-tst <- foreach(i = 1:length(trees), .combine = c) %dopar% {
+tst <- foreach(i = seq_along(trees), .combine = c) %dopar% {
   tmp <- trees[i]
   tmp <- tmp[[1]]
   tmp$edge.length <- NULL
