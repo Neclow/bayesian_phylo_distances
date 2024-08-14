@@ -7,8 +7,8 @@ Code for "Bayesian distance-based phylogenetics for the genomics era" (under rev
 ### Dependencies
 
 R version: 4.4.1
-
 ```r
+require(devtools)
 install.packages(
     c(
         "ape",
@@ -16,7 +16,11 @@ install.packages(
         "doParallel",
         "GGally",
         "magrittr",
-        "phangorn"
+        "phangorn",
+        "Rcpp",
+        "TreeSim",
     )
 )
+
+install_github("sebastianduchene/NELSI")
 ```

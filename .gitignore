@@ -60,3 +60,6 @@ rsconnect/
 
 # Built Visual Studio Code Extensions
 *.vsix
+
+# raxml-ng files
+*.raxml*

@@ -89,7 +89,11 @@ for (i in 1:n_trials) {
   # raxml
   tree_name <- paste0("data/random_trees/tmp_", i, ".tre")
   write.tree(tr, tree_name)
-  like <- run_rax(tree_name)
+  like <- run_rax(
+    fasta_name = "data/b10k_100kbp.fasta",
+    model_name = "GTR+G",
+    tree_name = tree_name
+  )
 
   pb$tick()
 
@@ -116,7 +120,12 @@ bme_adj(optimal_tree, D_choice, intercept, gradient)
 i <- 0
 tree_name <- paste0("data/b10k_calibration_trees/", i, ".tre")
 write.tree(optimal_tree, tree_name)
-like <- run_rax(tree_name, nofiles = TRUE)
+like <- run_rax(
+  fasta_name = "data/b10k_100kbp.fasta",
+  model_name = "GTR+G",
+  tree_name = tree_name,
+  nofiles = TRUE
+)
 
 
 burnin <- 5000000
@@ -173,14 +182,10 @@ for (i in 2:runs) {
   lines(mcmc_matrix[, i], col = alpha(i, 0.5))
 }
 
-# mcmc_matrix <- read.csv("results/b10k_mcmc_matrix.csv") %>%
-#   select(-X) %>%
-#   t()
-
 mc <- mcc(trees, rooted = FALSE)
 
 mcc_length <- phytools::optim.phylo.ls(
-  -D_choice,
+  -as.dist(D_choice),
   stree = mc,
   set.neg.to.zero = TRUE,
   fixed = TRUE,
@@ -189,16 +194,16 @@ mcc_length <- phytools::optim.phylo.ls(
 )
 
 support_tree <- plotBS(mcc_length, trees, type = "phylogram")
-write.tree(support_tree)
+write.tree(support_tree, file = "results/b10k_support.tree")
 
 rooted_support_tree <- phytools::midpoint.root(mcc_length)
 rooted_support_tree$edge.length[rooted_support_tree$edge.length == 0] <- 1e-4
 
 out_tree <- support_tree
 out_tree$node.label <- 100 - out_tree$node.label
-write.tree(out_tree)
+write.tree(out_tree, file = "results/out.tree")
 
-1 - RF.dist(raxml_tree, mcc_length, normalize = T)
+print(1 - RF.dist(raxml_tree, mcc_length, normalize = TRUE))
 
 tst <- foreach(i = seq_along(trees), .combine = c) %dopar% {
   tmp <- trees[i]
@@ -209,12 +214,14 @@ tst <- foreach(i = seq_along(trees), .combine = c) %dopar% {
 }
 
 un_tst <- unique(tst)
-length(un_tst)
-
+print(length(un_tst))
 
 rfd <- rep(0, length(un_tst))
 for (i in seq_along(un_tst)) {
-  rfd[i] <- 1 - RF.dist(read.tree(text = un_tst[i]), raxml_tree, normalize = TRUE)
+  rfd[i] <- 1 - RF.dist(
+    read.tree(text = un_tst[i]), raxml_tree,
+    normalize = TRUE
+  )
 }
 
 nsamp <- 2000
@@ -223,7 +230,7 @@ a <- 1:nsamp
 b <- 1:nsamp
 c <- 1:nsamp
 for (i in 1:nsamp) {
-  a[i] <- bme(trees[[i]], D_new2)
+  a[i] <- bme(trees[[i]], all_dmats[["b10k_60mill"]])
   b[i] <- bme(trees[[i]], D_choice)
-  c[i] <- bme(trees[[i]], D_new)
+  c[i] <- bme(trees[[i]], all_dmats[["b10k_100"]])
 }
