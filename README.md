@@ -24,3 +24,13 @@ install.packages(
 
 install_github("sebastianduchene/NELSI")
 ```
+
+### How to run
+```r
+Rscript error_analysis.R
+Rscript test_error_b10k.R
+```
+
+## Authors
+* Neil Scheidwasser (neil.clow@sund.ku.dk)
+* Samir Bhatt (samir.bhatt@sund.ku.dk)
